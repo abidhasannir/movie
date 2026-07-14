@@ -10,7 +10,7 @@ import sqlite3
 import datetime
 from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import secrets
 
@@ -681,24 +681,8 @@ async def proxy_stream(request: Request, token: str = Query(...)):
     # Secure token decoding (validates signature, expiry, and IP)
     url = decode_secure_token(token, request.client.host)
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-        "Referer": "https://netfilm.world/",
-    }
-    range_header = request.headers.get('range')
-    if range_header:
-        headers['Range'] = range_header
-
-    client = httpx.AsyncClient()
-    req = client.build_request("GET", url, headers=headers)
-    resp = await client.send(req, stream=True)
-    
-    out_headers = {}
-    for k, v in resp.headers.items():
-        if k.lower() in ["content-type", "content-range", "accept-ranges", "content-length"]:
-            out_headers[k] = v
-
-    return StreamingResponse(resp.aiter_raw(), status_code=resp.status_code, headers=out_headers)
+    # Redirect to the actual fast CDN link (eliminates buffering)
+    return RedirectResponse(url=url, status_code=302)
 
 @app.get("/api/status")
 async def get_status():
