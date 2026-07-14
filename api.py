@@ -2,9 +2,66 @@ import re
 import json
 import httpx
 import asyncio
-from fastapi import FastAPI, HTTPException, Query
+import hmac
+import hashlib
+import base64
+import time
+import sqlite3
+import datetime
+from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
+
+SECRET_KEY = b"super-secret-moviebox-key-2026"
+
+MAINTENANCE_MODE = False
+security = HTTPBasic()
+
+def init_db():
+    conn = sqlite3.connect("visitors.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS visitors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip TEXT UNIQUE,
+                    country TEXT,
+                    device TEXT,
+                    last_seen DATETIME
+                 )''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def generate_secure_token(url: str, ip_address: str, expire_hours: int = 6) -> str:
+    expires = int(time.time()) + (expire_hours * 3600)
+    data = {"url": url, "exp": expires, "ip": ip_address}
+    payload = base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip('=')
+    signature = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+def decode_secure_token(token: str, ip_address: str) -> str:
+    try:
+        payload, signature = token.split(".")
+        expected_signature = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected_signature, signature):
+            raise ValueError("Invalid signature")
+        
+        padding = '=' * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload + padding).decode())
+        if data["exp"] < time.time():
+            raise ValueError("Token expired")
+            
+        if data.get("ip") and data["ip"] != ip_address:
+            raise ValueError("IP address mismatch")
+            
+        return data["url"]
+    except Exception as e:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid, expired, or stolen secure link")
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 app = FastAPI(
     title="MovieBox API Pro",
@@ -19,10 +76,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def track_visitor(ip: str, user_agent: str):
+    # Parse precise OS/Device info
+    ua = user_agent.lower()
+    if "windows" in ua:
+        device = "Windows"
+    elif "android" in ua:
+        device = "Android"
+    elif "iphone" in ua or "ipad" in ua:
+        device = "iOS"
+    elif "mac" in ua:
+        device = "macOS"
+    elif "linux" in ua:
+        device = "Linux"
+    else:
+        device = "Unknown Device"
+    
+    country = "Unknown"
+    if ip and ip not in ("127.0.0.1", "::1", "localhost"):
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                res = await client.get(f"http://ip-api.com/json/{ip}")
+                data = res.json()
+                if data.get("status") == "success":
+                    country = data.get("country", "Unknown")
+        except Exception:
+            pass
+    elif ip in ("127.0.0.1", "::1", "localhost"):
+        country = "Localhost (Testing)"
+            
+    # Calculate BD Time (UTC+6)
+    bd_time = datetime.datetime.utcnow() + datetime.timedelta(hours=6)
+    now = bd_time.strftime("%I:%M %p | %b %d")
+    
+    conn = sqlite3.connect("visitors.db")
+    c = conn.cursor()
+    c.execute("SELECT id FROM visitors WHERE ip = ?", (ip,))
+    row = c.fetchone()
+    if row:
+        c.execute("UPDATE visitors SET last_seen = ? WHERE id = ?", (now, row[0]))
+    else:
+        c.execute("INSERT INTO visitors (ip, country, device, last_seen) VALUES (?, ?, ?, ?)", (ip, country, device, now))
+    conn.commit()
+    conn.close()
+
+@app.middleware("http")
+async def analytics_and_maintenance_middleware(request: Request, call_next):
+    # Only block standard API endpoints if maintenance is on
+    path = request.url.path
+    if MAINTENANCE_MODE and not path.startswith("/api/admin") and not path.startswith("/api/status"):
+        return JSONResponse(status_code=503, content={"maintenance": True, "detail": "Site is under maintenance"})
+        
+    # Dispatch analytics task in background (FastAPI background tasks via middleware is tricky, so we just asyncio.create_task)
+    if not path.startswith("/api/admin") and not path.startswith("/api/status"):
+        ip = request.client.host
+        ua = request.headers.get("user-agent", "")
+        asyncio.create_task(track_visitor(ip, ua))
+        
+    response = await call_next(request)
+    return response
+
 BASE_URL = "https://moviebox.ph"
 API_BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
 
-_bearer_token: str | None = None
+_bearer_token = None
 
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
@@ -471,7 +588,7 @@ async def get_movie_detail(slug: str):
     return await _make_request(url)
 
 @app.get("/api/stream/{subject_id}")
-async def get_stream_sources(subject_id: str, detail_path: str, se: int = 1, ep: int = 1):
+async def get_stream_sources(request: Request, subject_id: str, detail_path: str, se: int = 1, ep: int = 1):
     # Step 1: get the player domain
     dom_data = await _make_request(f"{API_BASE}/media-player/get-domain")
     domain = dom_data.get("data", "https://netfilm.world").rstrip("/")
@@ -492,20 +609,23 @@ async def get_stream_sources(subject_id: str, detail_path: str, se: int = 1, ep:
         {
             "resolution": f"{s.get('resolutions')}p",
             "format": s.get("format"),
-            "url": s.get("url"),
+            "url": f"/api/proxy_stream?token={generate_secure_token(s.get('url'), request.client.host)}" if s.get('url') else None,
             "size": s.get("size"),
             "duration": s.get("duration"),
             "codec": s.get("codecName")
         }
         for s in data.get("streams", [])
     ]
+    
+    hls_urls = [f"/api/proxy_stream?token={generate_secure_token(url, request.client.host)}" for url in data.get("hls", []) if url]
+    
     return {
         "subject_id": subject_id,
         "se": se,
         "ep": ep,
         "has_resource": has_resource,
         "sources": streams,
-        "hls": data.get("hls", []),
+        "hls": hls_urls,
         "dash": data.get("dash", []),
         "free_episodes": data.get("freeNum"),
         "limited": data.get("limited", False),
@@ -550,6 +670,67 @@ async def get_captions(subject_id: str, detail_path: str, se: int = 1, ep: int =
     inner = data.get("data", {})
     captions = inner.get("captions", []) if isinstance(inner, dict) else inner
     return {"subject_id": subject_id, "se": se, "ep": ep, "count": len(captions), "captions": captions}
+
+@app.get("/api/proxy_stream")
+async def proxy_stream(request: Request, token: str = Query(...)):
+    # Block casual hotlinking (e.g. VLC or other sites)
+    referer = request.headers.get("referer")
+    if not referer:
+        raise HTTPException(status_code=403, detail="Direct access not allowed")
+        
+    # Secure token decoding (validates signature, expiry, and IP)
+    url = decode_secure_token(token, request.client.host)
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        "Referer": "https://netfilm.world/",
+    }
+    range_header = request.headers.get('range')
+    if range_header:
+        headers['Range'] = range_header
+
+    client = httpx.AsyncClient()
+    req = client.build_request("GET", url, headers=headers)
+    resp = await client.send(req, stream=True)
+    
+    out_headers = {}
+    for k, v in resp.headers.items():
+        if k.lower() in ["content-type", "content-range", "accept-ranges", "content-length"]:
+            out_headers[k] = v
+
+    return StreamingResponse(resp.aiter_raw(), status_code=resp.status_code, headers=out_headers)
+
+@app.get("/api/status")
+async def get_status():
+    return {"maintenance": MAINTENANCE_MODE}
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, "admin")
+    correct_password = secrets.compare_digest(credentials.password, "admin123")
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+@app.get("/api/admin/analytics")
+async def get_analytics(username: str = Depends(verify_admin)):
+    conn = sqlite3.connect("visitors.db")
+    c = conn.cursor()
+    c.execute("SELECT ip, country, device, last_seen FROM visitors ORDER BY last_seen DESC LIMIT 100")
+    rows = c.fetchall()
+    conn.close()
+    
+    visitors = [{"ip": r[0], "country": r[1], "device": r[2], "last_seen": r[3]} for r in rows]
+    return {"visitors": visitors, "maintenance": MAINTENANCE_MODE}
+
+@app.post("/api/admin/toggle-maintenance")
+async def toggle_maintenance(username: str = Depends(verify_admin)):
+    global MAINTENANCE_MODE
+    MAINTENANCE_MODE = not MAINTENANCE_MODE
+    return {"maintenance": MAINTENANCE_MODE}
 
 if __name__ == "__main__":
     import uvicorn

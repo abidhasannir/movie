@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MovieBox Premium</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Maintenance Mode Overlay -->
+    <div id="maintenanceOverlay" class="maintenance-overlay hidden">
+        <div class="maintenance-card">
+            <i class="fas fa-tools"></i>
+            <h2>System Maintenance</h2>
+            <p>MovieBox is currently undergoing scheduled upgrades to improve your experience. We will be back shortly!</p>
+        </div>
+    </div>
+
+    <nav class="navbar">
+        <div class="logo" id="logoBtn" style="cursor: pointer;">Movie<span>Box</span></div>
+        <div class="search-container">
+            <input type="text" id="searchInput" placeholder="Search movies, series, anime...">
+            <button id="searchBtn"><i class="fas fa-search"></i></button>
+        </div>
+        <div class="nav-links">
+            <a href="contact.html" class="nav-btn"><i class="fas fa-envelope"></i> Contact Us</a>
+        </div>
+    </nav>
+
+    <main class="content-wrapper">
+        <section id="trending-section" class="category-section">
+            <h2 class="section-title">Trending Now</h2>
+            <div id="trending-grid" class="movies-grid hidden"></div>
+            <div id="trendingLoader" class="page-loader"><div class="apple-spinner"></div></div>
+        </section>
+
+        <section id="search-section" class="category-section hidden">
+            <h2 class="section-title">Search Results</h2>
+            <div id="search-grid" class="movies-grid"></div>
+        </section>
+    </main>
+
+    <div id="playerModal" class="modal">
+        <div class="modal-content pc-layout">
+            <span class="close-btn" id="closeModal">&times;</span>
+            <div class="modal-body">
+                
+                <!-- Left Side: Player and Details -->
+                <div class="video-main-section">
+                    <div class="player-container" id="playerContainer">
+                        <video id="videoPlayer" class="player" playsinline></video>
+                        <div id="playerLoader" class="loader-container fade-overlay hidden">
+                            <div class="apple-spinner"></div>
+                        </div>
+                    </div>
+                    <div class="details-container">
+                        <div class="details-header">
+                            <div>
+                                <h2 id="modalTitle">Movie Title</h2>
+                                <p id="modalBadges" class="badges"></p>
+                            </div>
+                            <div class="rating-box" id="modalRatingBox" style="display: none;">
+                                <span id="modalRating">6.5</span>
+                            </div>
+                        </div>
+                        <p id="modalDesc" class="movie-description">Description goes here...</p>
+                    </div>
+                </div>
+
+                <!-- Right Side: Sidebar -->
+                <div class="sidebar-section">
+                    <div class="sidebar-block">
+                        <h3>Format</h3>
+                        <p class="text-muted" id="streamFormat">High efficiency (MP4/H.264)</p>
+                    </div>
+
+                    <div id="episodesContainer" class="sidebar-block hidden">
+                        <h3>Episodes</h3>
+                        
+                        <div class="filters-row">
+                            <select class="custom-select"><option>Season 1</option></select>
+                        </div>
+                        
+                        <div id="episodesList" class="episodes-grid"></div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
