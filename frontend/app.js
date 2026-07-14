@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://moviebox-api-efcn.onrender.com';
 
 // Elements
 const trendingGrid = document.getElementById('trending-grid');
