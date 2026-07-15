@@ -299,11 +299,28 @@ async function playStream(subjectId, slug, se=1, ep=1) {
     }
 
     try {
-        const res = await fetch(`${API_URL}/api/stream/${subjectId}?detail_path=${slug}&se=${se}&ep=${ep}`);
-        const data = await res.json();
+        const apiRes = await fetch(`${API_URL}/api/stream/${subjectId}?detail_path=${slug}&se=${se}&ep=${ep}`);
+        const apiPayload = await apiRes.json();
+        
+        if (!apiPayload.play_url) {
+            throw new Error('No stream available.');
+        }
+
+        const WORKER_URL = "https://moviebox-proxies.protikabir.workers.dev/";
+        const workerRes = await fetch(`${WORKER_URL}?url=${encodeURIComponent(apiPayload.play_url)}&referer=${encodeURIComponent(apiPayload.player_referer)}`);
+        const rawData = await workerRes.json();
+        
+        const data = {
+            has_resource: rawData.data && rawData.data.hasResource,
+            sources: (rawData.data && rawData.data.streams || []).map(s => ({
+                resolution: s.resolutions + "p",
+                url: s.url
+            })),
+            hls: rawData.data && rawData.data.hls || []
+        };
 
         if (!data.has_resource) {
-            throw new Error(data.note || 'No stream available.');
+            throw new Error('No stream available.');
         }
 
         document.getElementById('playerLoader').classList.add('hidden');
@@ -326,7 +343,7 @@ async function playStream(subjectId, slug, se=1, ep=1) {
                 
                 validSources.forEach((s) => {
                     const qualityNum = parseInt(s.resolution.replace('p', '')) || 720;
-                    sourcesHtml += `<source src="${API_URL}${s.url}" type="video/mp4" size="${qualityNum}">`;
+                    sourcesHtml += `<source src="${s.url}" type="video/mp4" size="${qualityNum}">`;
                 });
                 
                 video.innerHTML = sourcesHtml;
@@ -347,7 +364,7 @@ async function playStream(subjectId, slug, se=1, ep=1) {
         // Fallback to HLS
         if (data.hls && data.hls.length > 0) {
             const hlsUrl = data.hls[0];
-            const proxiedStreamUrl = `${API_URL}${hlsUrl}`;
+            const streamUrl = hlsUrl;
             document.getElementById('streamFormat').textContent = 'Adaptive Quality (HLS)';
 
             const video = document.getElementById('videoPlayer');
@@ -361,7 +378,7 @@ async function playStream(subjectId, slug, se=1, ep=1) {
 
             if (Hls.isSupported()) {
                 hls = new Hls();
-                hls.loadSource(proxiedStreamUrl);
+                hls.loadSource(streamUrl);
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {
                     attachProgressTracker(subjectId, se, ep);

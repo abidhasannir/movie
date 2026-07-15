@@ -571,47 +571,12 @@ async def get_stream_sources(request: Request, subject_id: str, detail_path: str
         f"?id={subject_id}&type=/movie/detail&detailSe={se}&detailEp={ep}&lang=en"
     )
     play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId={subject_id}&se={se}&ep={ep}&detailPath={detail_path}"
-    
-    # Inject user's real IP to prevent geo-blocking on Render
-    client_ip = request.client.host
-    spoofed_headers = {
-        **PLAYER_HEADERS, 
-        "Referer": player_referer,
-        "X-Forwarded-For": client_ip,
-        "Client-IP": client_ip,
-        "X-Real-IP": client_ip
-    }
-
-    async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
-        resp = await client.get(play_url, headers=spoofed_headers)
-        data = resp.json().get("data", {})
-
-    has_resource = data.get("hasResource", False)
-    streams = [
-        {
-            "resolution": f"{s.get('resolutions')}p",
-            "format": s.get("format"),
-            "url": s.get('url'),
-            "size": s.get("size"),
-            "duration": s.get("duration"),
-            "codec": s.get("codecName")
-        }
-        for s in data.get("streams", [])
-    ]
-    
-    hls_urls = [url for url in data.get("hls", []) if url]
-    
     return {
         "subject_id": subject_id,
         "se": se,
         "ep": ep,
-        "has_resource": has_resource,
-        "sources": streams,
-        "hls": hls_urls,
-        "dash": data.get("dash", []),
-        "free_episodes": data.get("freeNum"),
-        "limited": data.get("limited", False),
-        "note": None if has_resource else "No stream found for this episode."
+        "play_url": play_url,
+        "player_referer": player_referer
     }
 
 @app.get("/api/stream/{subject_id}/captions")
