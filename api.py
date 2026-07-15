@@ -571,9 +571,19 @@ async def get_stream_sources(request: Request, subject_id: str, detail_path: str
         f"?id={subject_id}&type=/movie/detail&detailSe={se}&detailEp={ep}&lang=en"
     )
     play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId={subject_id}&se={se}&ep={ep}&detailPath={detail_path}"
+    
+    # Inject user's real IP to prevent geo-blocking on Render
+    client_ip = request.client.host
+    spoofed_headers = {
+        **PLAYER_HEADERS, 
+        "Referer": player_referer,
+        "X-Forwarded-For": client_ip,
+        "Client-IP": client_ip,
+        "X-Real-IP": client_ip
+    }
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
-        resp = await client.get(play_url, headers={**PLAYER_HEADERS, "Referer": player_referer})
+        resp = await client.get(play_url, headers=spoofed_headers)
         data = resp.json().get("data", {})
 
     has_resource = data.get("hasResource", False)
@@ -605,7 +615,7 @@ async def get_stream_sources(request: Request, subject_id: str, detail_path: str
     }
 
 @app.get("/api/stream/{subject_id}/captions")
-async def get_captions(subject_id: str, detail_path: str, se: int = 1, ep: int = 1):
+async def get_captions(request: Request, subject_id: str, detail_path: str, se: int = 1, ep: int = 1):
     dom_data = await _make_request(f"{API_BASE}/media-player/get-domain")
     domain = dom_data.get("data", "https://netfilm.world").rstrip("/")
 
@@ -614,9 +624,19 @@ async def get_captions(subject_id: str, detail_path: str, se: int = 1, ep: int =
         f"?id={subject_id}&type=/movie/detail&detailSe={se}&detailEp={ep}&lang=en"
     )
     play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId={subject_id}&se={se}&ep={ep}&detailPath={detail_path}"
+    
+    # Inject user's real IP to prevent geo-blocking on Render
+    client_ip = request.client.host
+    spoofed_headers = {
+        **PLAYER_HEADERS, 
+        "Referer": player_referer,
+        "X-Forwarded-For": client_ip,
+        "Client-IP": client_ip,
+        "X-Real-IP": client_ip
+    }
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
-        play_resp = await client.get(play_url, headers={**PLAYER_HEADERS, "Referer": player_referer})
+        play_resp = await client.get(play_url, headers=spoofed_headers)
         play_data = play_resp.json().get("data", {})
 
     streams = play_data.get("streams", [])
