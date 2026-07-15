@@ -343,7 +343,8 @@ async function playStream(subjectId, slug, se=1, ep=1) {
                 
                 validSources.forEach((s) => {
                     const qualityNum = parseInt(s.resolution.replace('p', '')) || 720;
-                    sourcesHtml += `<source src="${s.url}" type="video/mp4" size="${qualityNum}">`;
+                    const proxiedUrl = `${WORKER_URL}?url=${encodeURIComponent(s.url)}&referer=${encodeURIComponent(apiPayload.player_referer)}`;
+                    sourcesHtml += `<source src="${proxiedUrl}" type="video/mp4" size="${qualityNum}">`;
                 });
                 
                 video.innerHTML = sourcesHtml;
@@ -364,7 +365,7 @@ async function playStream(subjectId, slug, se=1, ep=1) {
         // Fallback to HLS
         if (data.hls && data.hls.length > 0) {
             const hlsUrl = data.hls[0];
-            const streamUrl = hlsUrl;
+            const streamUrl = `${WORKER_URL}?url=${encodeURIComponent(hlsUrl)}&referer=${encodeURIComponent(apiPayload.player_referer)}`;
             document.getElementById('streamFormat').textContent = 'Adaptive Quality (HLS)';
 
             const video = document.getElementById('videoPlayer');
