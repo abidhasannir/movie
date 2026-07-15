@@ -10,11 +10,9 @@ import sqlite3
 import datetime
 from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import secrets
-
-SECRET_KEY = b"super-secret-moviebox-key-2026"
 
 MAINTENANCE_MODE = False
 security = HTTPBasic()
@@ -33,32 +31,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-def generate_secure_token(url: str, ip_address: str, expire_hours: int = 6) -> str:
-    expires = int(time.time()) + (expire_hours * 3600)
-    data = {"url": url, "exp": expires, "ip": ip_address}
-    payload = base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip('=')
-    signature = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}.{signature}"
-
-def decode_secure_token(token: str, ip_address: str) -> str:
-    try:
-        payload, signature = token.split(".")
-        expected_signature = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected_signature, signature):
-            raise ValueError("Invalid signature")
-        
-        padding = '=' * (-len(payload) % 4)
-        data = json.loads(base64.urlsafe_b64decode(payload + padding).decode())
-        if data["exp"] < time.time():
-            raise ValueError("Token expired")
-            
-        if data.get("ip") and data["ip"] != ip_address:
-            raise ValueError("IP address mismatch")
-            
-        return data["url"]
-    except Exception as e:
-        raise HTTPException(status_code=403, detail="Forbidden: Invalid, expired, or stolen secure link")
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -609,7 +581,7 @@ async def get_stream_sources(request: Request, subject_id: str, detail_path: str
         {
             "resolution": f"{s.get('resolutions')}p",
             "format": s.get("format"),
-            "url": f"/api/proxy_stream?token={generate_secure_token(s.get('url'), request.client.host)}" if s.get('url') else None,
+            "url": s.get('url'),
             "size": s.get("size"),
             "duration": s.get("duration"),
             "codec": s.get("codecName")
@@ -617,7 +589,7 @@ async def get_stream_sources(request: Request, subject_id: str, detail_path: str
         for s in data.get("streams", [])
     ]
     
-    hls_urls = [f"/api/proxy_stream?token={generate_secure_token(url, request.client.host)}" for url in data.get("hls", []) if url]
+    hls_urls = [url for url in data.get("hls", []) if url]
     
     return {
         "subject_id": subject_id,
@@ -671,18 +643,6 @@ async def get_captions(subject_id: str, detail_path: str, se: int = 1, ep: int =
     captions = inner.get("captions", []) if isinstance(inner, dict) else inner
     return {"subject_id": subject_id, "se": se, "ep": ep, "count": len(captions), "captions": captions}
 
-@app.get("/api/proxy_stream")
-async def proxy_stream(request: Request, token: str = Query(...)):
-    # Block casual hotlinking (e.g. VLC or other sites)
-    referer = request.headers.get("referer")
-    if not referer:
-        raise HTTPException(status_code=403, detail="Direct access not allowed")
-        
-    # Secure token decoding (validates signature, expiry, and IP)
-    url = decode_secure_token(token, request.client.host)
-    
-    # Redirect to the actual fast CDN link (eliminates buffering)
-    return RedirectResponse(url=url, status_code=302)
 
 @app.get("/api/status")
 async def get_status():
